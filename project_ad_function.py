@@ -2,33 +2,26 @@
 
 import random
 import math
-import pandas
 import project_ad_db
 import datetime
-import sqlalchemy
 import logging
 from logging import handlers
-from multiprocessing import Process, Lock, Value
-
-MAX_WRITE_SQL_NUM = 3000
-
+from multiprocessing import Process, Value
 
 
 #MAX_AD_PERCENT = 0.6
 #TOTAL_SCORE = 20
 
 
-def tag_calculate(per, ad):
-    per_data = per.values
-    ad_data = ad.values
+def tag_calculate(per_data, ad_data):
     result = 0
     # 性别标签
     if ad_data[3] is None or len(ad_data[3])==3:  # 广告无要求
-        result += 1
+        result_sex = 0.99                         # 0.99为无限制系数
     elif per_data[3] is None:  # 人数据错误
         return 0
     elif per_data[3] in ad_data[3]:  # 得分
-        result += 1
+        result_sex = 1
     else:  # 人数据错误
         return 0
     # 孩子标签
@@ -38,17 +31,16 @@ def tag_calculate(per, ad):
                  '4': '7-12',
                  '5': '13-18',
                  }
-    if ad_data[5] is None or ad_data[5] == '1':  # 广告无要求 孩子系数0.1
-        if per_data[5] == '0':
-            result += 1
-        else:
-            result = result + (len(per_data[5 + 1].split(',')) - 1) * 0.1 + 1
-    elif per_data[5 + 1] is None:  # 无小孩
+    if ad_data[5] is None or len(ad_data[5]) == 9:  # 广告无要求
+        result_child = 0.99
+    elif (per_data[5 + 1] is None) and (not('1'in ad_data[5])):  # 要求有，而实际无
         return 0
+    elif (per_data[5 + 1] is None) and ('1'in ad_data[5]):  # 无小孩
+        result_child = 1
     else:
         score = get_score(per_data[5 + 1], ad_data[5], age_child, 0.5)  # 得分
         if score:
-            result += score
+            result_child = score
         else:
             return 0
     # 年龄标签
@@ -57,31 +49,30 @@ def tag_calculate(per, ad):
                  '2': '30-49',
                  '3': '50-200',
                  }
-    if ad_data[2] is None or len(ad_data[2])==7:  #广告无要求
-        result += 1
-    elif not (str(per_data[2]).isdigit()) or per_data[2] is None or per_data[2] == 0 :  #人数据错误
+    if ad_data[2] is None or len(ad_data[2])==7:  # 广告无要求
+        result_age = 0.99
+    elif not (str(per_data[2]).isdigit()) or per_data[2] is None:  # 人数据错误
         return 0
     else:
-        score = get_score(str(int(per_data[2])), ad_data[2], age_adult, 0.2)  #得分
+        score = get_score(str(int(per_data[2])), ad_data[2], age_adult, 0.2)  # 得分
         if score:
-            result += score
+            result_age = score
         else:
-            pass
+            result_age = 0
     # 收入标签
-    if ad_data[6] is None or len(ad_data[6])==5:  #广告无要求
-        result += 1
-    elif per_data[6 + 1] is None:  #陌生人处理，系数0.1
-        result += 0.1
-    elif per_data[6 + 1] in ad_data[6]:  #得分
-        result += 1
-    else:  #得分
-        result += min([abs(int(i) - int(per_data[6 + 1])) for i in ad_data[6].split(',')])*0.1
-    return result
+    if ad_data[6] is None or len(ad_data[6])==5:  # 广告无要求
+        result_income = 0.99
+    elif per_data[6 + 1] is None:  # 陌生人处理，系数0.1
+        result_income = 0.1
+    elif per_data[6 + 1] in ad_data[6]:  # 得分
+        result_income = 1
+    else:  # 得分
+        result_income = min([abs(int(i) - int(per_data[6 + 1])) for i in ad_data[6].split(',')])*0.1
+    return (result+result_sex+result_child+result_age+result_income)
 
 
-def percent_random_ad(ad, ad_weight):
+def percent_random_ad(ad_data, ad_weight):
     tem = []
-    ad_data = ad.values
     MAX_SQL_NUM = 20
     ################################################
     MAX_AD_NUM = 3    # 广告数量
@@ -99,14 +90,12 @@ def percent_random_ad(ad, ad_weight):
         MAX_AD_NUM = j
     ################################################
     if MAX_AD_NUM <= 0:
-        print(len(ad_weight), '  ',ad_weight.count(0), '  ',j, '  ',MAX_AD_NUM)
-        return None
+        return []
     else:
         tem_data = list(zip(ad_data, ad_weight))
         random.shuffle(tem_data)
         tem_data = sorted(tem_data, key=lambda x:x[1], reverse=True)
         tem_data = tem_data[0:MAX_AD_NUM]
-        #print(tem_data)
         weight_sum = sum([x[1] for x in tem_data])
         if MAX_AD_NUM<MAX_SQL_NUM:
             for i in range(MAX_AD_NUM):
@@ -120,15 +109,15 @@ def percent_random_ad(ad, ad_weight):
                 tem = tem + random.sample(tem, MAX_SQL_NUM-tem_len)
             else:
                 pass
-            random.shuffle(tem)
-            #tem = random.sample(tem, len(tem))
+            #random.shuffle(tem)   #顺序打乱
+            #tem = random.sample(tem, len(tem))   #或 顺序打乱
             return tem
         else:
-            #tem = dict(tem_data[0:MAX_SQL_NUM])
-            #tem = list(tem.keys())
-            tem = dict(tem_data)
-            tem = list(tem.keys())
-            tem = random.sample(tem, MAX_SQL_NUM)
+            tem = dict(tem_data[0:MAX_SQL_NUM])   #顺序不打乱1
+            tem = list(tem.keys())   #顺序不打乱2
+            #tem = dict(tem_data)   #顺序打乱1
+            #tem = list(tem.keys())   #顺序打乱2
+            #tem = random.sample(tem, MAX_SQL_NUM)   #顺序打乱3
             return tem
 
 
@@ -150,17 +139,19 @@ def get_score(person, ad, ad_dict, gamma_k):
                 delta_down = j_person - ad_tem[0]
                 if delta_up>=0 and delta_down>=0:
                     result += [1]
-                    break
+                    return 1   #满足要求，返回
+                    #break   #满足继续计算，全部计算完成
                 else:
                     x = min(abs(delta_up), abs(delta_down))
                     result += [gamma_function(x, gamma_k)]
+        '''   #满足继续计算，全部计算完成
         result_count = result.count(1)
         if result_count==0:
             return max(result)
-        elif result_count==1:
-            return 1
         else:
-            return 1 + (result_count-1)*0.1   #系数0.1
+            return 1 + (result_count-1)*0.01   #系数0.01
+        '''
+        return max(result)
     else:
         result = 0
     return result
@@ -194,106 +185,96 @@ class Logger():
         self.logger.addHandler(th)
 
 
-def person_ad_process(log, per_data, ad_data, lock, num):
-    if per_data is None or ad_data is None:
-            return None
-    per_num = len(per_data)
-    ad_num = len(ad_data)
-    tem = [[]] * MAX_WRITE_SQL_NUM
-    max_write_k = 0
-    x = project_ad_db.data_base()
-    open1 = x.sql_open(log)
-    for i in range(0, per_num):
-        per_tem = []
-        tem[max_write_k] = tem[max_write_k] + [per_data.iloc[i, 1]]
-        for j in range(0, ad_num):
-            per_tem.append(tag_calculate(per_data.iloc[i, :], ad_data.iloc[j, :]))
-        '''lock.acquire()
-        f = open('test.txt','a+')
-        f.write(str([per_data.iloc[i, 1]]+per_tem))
-        f.write('\n')
-        f.close()
-        lock.release()'''
-        ad_tem2 = percent_random_ad(ad_data.iloc[:, 0], per_tem)
-        ad_result = ''
-        if ad_tem2 is None:
-            pass
-        else:
-            for ad_random in ad_tem2[:-1]:
-                ad_result = ad_result + ad_random + ','
-            ad_result = ad_result + ad_tem2[-1]
-        tem[max_write_k] = tem[max_write_k] + [ad_result]
-        if (max_write_k == MAX_WRITE_SQL_NUM-1):
-            lock.acquire()
-            #write_data(tem[0: max_write_k + 1], log, num)
-            project_ad_db.insert_sql_data(open1, tem[0: max_write_k + 1], log, num)
-            lock.release()
-            tem = [[]] * MAX_WRITE_SQL_NUM
-            max_write_k = 0
-        elif (i == per_num-1):
-            lock.acquire()
-            #write_data(tem[0: max_write_k + 1], log, num)
-            project_ad_db.insert_sql_data(open1, tem[0: max_write_k + 1], log, num)
-            lock.release()
-        else:
-            max_write_k += 1
-    open1.close()
-
-
-def write_data(data, log, num):
-    d_type = {'ID': sqlalchemy.types.NVARCHAR(length=32),
-              'RESI_HOUSE_ID': sqlalchemy.types.NVARCHAR(length=32),
-              'MTRL_ID': sqlalchemy.types.NVARCHAR(length=700),
-              'CREATE_DTTM': sqlalchemy.types.DateTime(),
-              'PLAY_DT': sqlalchemy.types.Date(),
-              }
-    data_sql = pandas.DataFrame(data=data, columns=list(d_type.keys()))
-    try:
-        num.value += project_ad_db.write_sql_data(data_sql, 't_resi_adv_relaship', d_type, 'append', log)
-    except Exception as e:
-        log.logger.warning(e)
-
-
 def read_data(log):
-    try:
-        #per_data = project_ad_db.get_sql_data('t_resi_attr', log)
-        per_data = project_ad_db.per_sql_data(log)
-        today_time = datetime.datetime.now().strftime('%Y-%m-%d')
-        ad_data = project_ad_db.ad_sql_data(today_time, log)
-    except Exception as e:
-        log.logger.warning(e)
+    today_time = datetime.datetime.now()
+    yesterday_time = today_time + datetime.timedelta(days=-1)
+    today_time = today_time.strftime('%Y-%m-%d')
+    yesterday_time = yesterday_time.strftime('%Y-%m-%d')
+    x = project_ad_db.data_base()
+    pool = x.pool_open(log)
+    per_num = 0
+    ad_data = []
+    if pool:
+        try:
+            open = pool.connection()
+            # project_ad_db.delete_table(open, 't_resi_adv_relaship')
+            per_num, ad_data = project_ad_db.get_ad_data(open, yesterday_time, today_time)
+            per_num = per_num.iat[0, 0]
+        except Exception as e:
+            log.logger.warning(e)
+        else:
+            open.close()
+        finally:
+            pool.close()
     else:
-        return per_data,ad_data
+        pass
+    return per_num, ad_data
 
 
-def main_test(log):
+def write_data(log, per1, per2, ad_data, flag_num):
+    sql_order = "replace into t_resi_adv_relaship(RESI_HOUSE_ID, MTRL_ID, PLAY_DT, CREATE_DTTM) VALUES (%s,%s,CURDATE(),NOW())"
+    x = project_ad_db.data_base()
+    pool = x.pool_open(log)
+    if pool:
+        try:
+            open = pool.connection()
+            per_data = project_ad_db.get_per_data(open, per1, per2)
+            cur = open.cursor()
+            s = datetime.datetime.now()
+            for per in per_data:
+                tag_coefficient = []
+                ad_data_temp = ad_data[ad_data.AREA_ID == per[-1]]
+                for j in range(ad_data_temp.shape[0]):
+                    tag_coefficient.append(tag_calculate(per, ad_data_temp.iloc[j, :].values))
+                tag_result = percent_random_ad(ad_data_temp.iloc[:, 0].values, tag_coefficient)
+                cur.execute(sql_order, [per[1]] + [','.join(tag_result)])
+            e = datetime.datetime.now()
+        except Exception as e:
+            flag_num.value -= 1
+            log.logger.warning(e)
+        else:
+            open.commit()
+            cur.close()
+            open.close()
+            print(e - s)
+        finally:
+            pool.close()
+    else:
+        flag_num.value -= 1
+
+
+def main_ad(log):
     s = datetime.datetime.now()
-    per_data, ad_data = read_data(log)
-    third_len = int(len(per_data)/3)
-    lock = Lock()
-    #cores = multiprocessing.cpu_count()
-    #pool = multiprocessing.Pool(processes=cores)
-    result_num = Value('i', 0)
-    p = Process(target=person_ad_process, args=(log, per_data[0:third_len], ad_data, lock, result_num))
-    p2 = Process(target=person_ad_process, args=(log, per_data[third_len:third_len*2], ad_data, lock, result_num))
-    p3 = Process(target=person_ad_process, args=(log, per_data[third_len*2:], ad_data, lock, result_num))
-    p.start()
-    p2.start()
-    p3.start()
-    p.join()
-    p2.join()
-    p3.join()
+    per_num, ad_data = read_data(log)
+    flag_num = Value('i', 1)
+    if per_num <= 0 or len(ad_data) <= 0:
+        flag_num.value -= 1
+    else:
+        process_num = 3
+        per_data_one = int(per_num / process_num) + 1
+        process_num = range(1, process_num + 1)
+        process_list = []
+        for i, j in enumerate(process_num):
+            p = Process(target=write_data, args=(log, per_data_one * i, per_data_one, ad_data, flag_num))
+            p.start()
+            process_list.append(p)
+        for p in process_list:
+            p.join()
     e = datetime.datetime.now()
+    log.logger.info(flag_num.value)
     log.logger.info(e - s)
-    log.logger.info(result_num.value)
+    log.logger.info('===============')
+    return flag_num.value
 
 
 if __name__ == '__main__':
     log = Logger('record.log', level='debug')
-    s = datetime.datetime.now().strftime('%Y-%m-%d')
-    ad_data = project_ad_db.ad_sql_data(s, log)
-    ad_data.to_csv('aaa.csv')
-    print(ad_data)
+    per, ad = read_data(log)
+    # ad.to_csv('aaa.csv')
+    print(ad)
+    print(per)
+
+
 
 
 
