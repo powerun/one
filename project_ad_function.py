@@ -68,6 +68,13 @@ class OpenDoorAd():
             result_income = 1 - 0.01*(len(ad_data[6])-1)/5.0
         else:  # 得分
             result_income = min([abs(int(i) - int(per_data[6 + 1])) for i in ad_data[6].split(',')]) * 0.1
+        '''
+        delta_day = (datetime.datetime.now() - ad_data[7]).days
+        if delta_day>30:
+            result_day = 0
+        else:
+            result_day = self.gamma_value(delta_day, 0.2)
+        '''
         return (result_sex + result_child + result_age + result_income)
 
     def percent_random_ad(self, tag_data, MAX_SQL_NUM = 20, MAX_AD_NUM = 3):
@@ -249,7 +256,7 @@ class OpenDoorAd():
         sql_order_per = '''SELECT COUNT(t1.RESI_HOUSE_ID)+ (SELECT COUNT(ID)*8-8 FROM t_area_info)
                         FROM t_resi_attr t1
                         WHERE t1.IS_DELETE='0'; '''
-        sql_order_ad = '''SELECT t3.ADV_MTRL_ID,t2.CAMP_ID,t2.AGE,t2.SEX,t2.RESI_TYPE,t2.CHILD_AGE,t2.INCOME_STATUS,t5.AREA_ID
+        sql_order_ad = '''SELECT t3.ADV_MTRL_ID,t2.CAMP_ID,t2.AGE,t2.SEX,t2.RESI_TYPE,t2.CHILD_AGE,t2.INCOME_STATUS,t2.UPDATE_DTTM,t5.AREA_ID
                         FROM t_adv_camp t1 
                         LEFT JOIN (select t1.camp_id, sum(t1.play_num) playNum from t_adv_play_count t1 where t1.count_dt = '%s' 
                         group by t1.camp_id) s1 on t1.id = s1.CAMP_ID,t_adv_cond_resi t2,t_adv_camp_mtrl t3, t_adv_mtrl t4, t_adv_cond_area t5
