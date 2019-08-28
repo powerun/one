@@ -167,14 +167,14 @@ class OpenDoorAd():
 
     def read_data(self):
         today_time = datetime.datetime.now()
-        yesterday_time = today_time + datetime.timedelta(days=-1)
         today_time = today_time.strftime('%Y-%m-%d')
-        yesterday_time = yesterday_time.strftime('%Y-%m-%d')
+        #yesterday_time = today_time + datetime.timedelta(days=-1)
+        #yesterday_time = yesterday_time.strftime('%Y-%m-%d')
         x = project_ad_db.data_base()
         open = x.sql_open(self.log)
         if open:
             try:
-                per, ad_data = self.get_ad_mysql(open, yesterday_time, today_time)
+                per, ad_data = self.get_ad_mysql(open, today_time)
                 per_num = per.iat[0, 0]
             except Exception as e:
                 self.log.logger.warning(e)
@@ -252,14 +252,13 @@ class OpenDoorAd():
             else:
                 yield (result)
 
-    def get_ad_mysql(self, open, yesterday, today):
+    def get_ad_mysql(self, open, today):
         sql_order_per = '''SELECT COUNT(t1.RESI_HOUSE_ID)+ (SELECT COUNT(ID)*8-8 FROM t_area_info)
                         FROM t_resi_attr t1
                         WHERE t1.IS_DELETE='0'; '''
         sql_order_ad = '''SELECT t3.ADV_MTRL_ID,t2.CAMP_ID,t2.AGE,t2.SEX,t2.RESI_TYPE,t2.CHILD_AGE,t2.INCOME_STATUS,t2.UPDATE_DTTM,t5.AREA_ID
                         FROM t_adv_camp t1 
-                        LEFT JOIN (select t1.camp_id, sum(t1.play_num) playNum from t_adv_play_count t1 where t1.count_dt = '%s' 
-                        group by t1.camp_id) s1 on t1.id = s1.CAMP_ID,t_adv_cond_resi t2,t_adv_camp_mtrl t3, t_adv_mtrl t4, t_adv_cond_area t5
+                        LEFT JOIN (select t2.CAMP_ID, sum(t1.PLAY_NUM) playNum from t_adv_mtrl_play_count t1, t_adv_camp_mtrl t2 where t1.ADV_MTRL_ID = t2.ADV_MTRL_ID and t1.COUNT_DT <= '%s' group by t2.CAMP_ID) s1 on t1.id = s1.CAMP_ID,t_adv_cond_resi t2,t_adv_camp_mtrl t3, t_adv_mtrl t4, t_adv_cond_area t5
                         WHERE
                         t1.ID = t2.CAMP_ID
                         AND t1.ID = t3.CAMP_ID
@@ -274,7 +273,7 @@ class OpenDoorAd():
                         AND t1.ADV_TYPE = '2'
                         AND t1.CAMP_STATUS in ('unplayed','playing')
                         AND t1.is_Legal_hday_play in ('0', (SELECT is_Legal_hday FROM t_sys_calendar WHERE f_date='%s'))''' % (
-        yesterday, today, today)
+            today, today, today)
         data_ad = pd.read_sql(sql_order_ad, con=open)
         len_per = pd.read_sql(sql_order_per, con=open)
         return len_per, data_ad
